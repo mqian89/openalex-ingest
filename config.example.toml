@@ -1,0 +1,26 @@
+# Example configuration for OpenAlex ingestion.
+# Copy this file to `config.toml` and edit values for your environment.
+# You can also override many values via environment variables (see run_ingest.py).
+
+# OpenAlex recommends including a contact email via the `mailto` query param.
+email = "your.email@example.com"
+
+# Where Parquet batch files will be written (relative to repo root or absolute path).
+output_dir = "batch_store_works_api"
+
+# Logging verbosity: DEBUG, INFO, WARNING, ERROR
+log_level = "INFO"
+
+# OpenAlex API options
+per_page = 200          # max allowed by OpenAlex works endpoint
+timeout_s = 60.0        # per-request timeout in seconds
+max_attempts = 8        # retries per request on 429/503/transient transport errors
+
+# Batching options
+batch_size = 10         # number of author IDs per API filter request
+skip_existing = true    # if true, skip batches whose parquet file already exists
+deterministic_batches = false  # if true, sort+dedupe author IDs for stable batching across runs
+
+# Concurrency controls
+max_concurrent_http = 10      # max simultaneous HTTP requests (semaphore)
+max_concurrent_batches = 5    # max batches processed in parallel (workers)
