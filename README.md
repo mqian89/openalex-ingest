@@ -162,4 +162,5 @@ export OPENALEX_EMAIL="you@domain.com"
 
 ## License
 
-Add a license (e.g., MIT) if you plan to reuse and share this repo.
+MIT License. See `LICENSE` for details.
+
