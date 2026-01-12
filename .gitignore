@@ -1,2 +1,8 @@
 # Local configuration (do not commit)
 config.toml
+inputs/author_ids.csv
+inputs/author_ids_full.csv
+inputs/author_ids_test.csv
+output/*
+*.egg-info/
+logs/*

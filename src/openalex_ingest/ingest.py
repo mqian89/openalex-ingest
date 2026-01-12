@@ -7,11 +7,12 @@ import os
 import random
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import httpx
-import pandas as pd
+import json
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,20 +35,18 @@ def chunk(iterable: Iterable[str], size: int) -> Iterator[List[str]]:
 
 
 def batch_fname(output_dir: str, batch_index: int) -> str:
-    return os.path.join(output_dir, f"works_batch_{batch_index:04d}.parquet")
+    return os.path.join(output_dir, f"works_batch_{batch_index:04d}.jsonl")
 
 
 # =========================
 # Soft throttling monitor
 # =========================
+
+
 @dataclass
 class SoftThrottleMonitor:
-    """
-    Detect likely 'soft throttling' by comparing recent avg latency against a baseline.
-    """
-
-    lat_short: deque = deque(maxlen=8)
-    lat_long: deque = deque(maxlen=40)
+    lat_short: deque = field(default_factory=lambda: deque(maxlen=8))
+    lat_long: deque = field(default_factory=lambda: deque(maxlen=40))
     last_warn_ts: float = 0.0
 
     slow_factor: float = 1.5
@@ -110,7 +109,7 @@ async def fetch_page(
             if warn_msg:
                 logger.warning(warn_msg)
 
-            logger.info(
+            logger.debug(
                 "openalex_response status=%s latency=%.2fs remaining=%s retry_after=%s",
                 r.status_code,
                 dt,
@@ -181,7 +180,8 @@ async def fetch_batch(
     skip_existing: bool = True,
 ) -> int:
     """
-    Fetch all works for a batch of OpenAlex Author IDs and save to a parquet file.
+    Fetch all works for a batch of OpenAlex Author IDs and save as JSONL (one work per line).
+    Each work JSON object is exactly what OpenAlex returns in `results`.
     """
     os.makedirs(output_dir, exist_ok=True)
     fname = batch_fname(output_dir, batch_index)
@@ -200,52 +200,57 @@ async def fetch_batch(
         "mailto": mailto,
     }
 
-    works: List[Dict[str, Any]] = []
-
-    while True:
-        data = await fetch_page(
-            client,
-            base_url,
-            params,
-            semaphore=semaphore,
-            monitor=monitor,
-            max_attempts=max_attempts,
-        )
-        works.extend(data.get("results", []))
-
-        next_cursor = data.get("meta", {}).get("next_cursor")
-        if not next_cursor:
-            break
-        params["cursor"] = next_cursor
-
-    # Identify IDs with / without works (best-effort; depends on returned authorships)
     ids_with_works = set()
-    for w in works:
-        for a in w.get("authorships", []) or []:
-            author = a.get("author") or {}
-            aid = author.get("id")
-            if not aid:
-                continue
-            aid = aid.split("/")[-1]
-            if aid in batch_ids:
-                ids_with_works.add(aid)
+    works_written = 0
 
+    # Stream write: write each work as soon as we see it
+    with open(fname, "w", encoding="utf-8") as f:
+        while True:
+            data = await fetch_page(
+                client,
+                base_url,
+                params,
+                semaphore=semaphore,
+                monitor=monitor,
+                max_attempts=max_attempts,
+            )
+
+            results = data.get("results", []) or []
+            for w in results:
+                # write raw work JSON exactly as returned (no transformation)
+                f.write(json.dumps(w, ensure_ascii=False) + "\n")
+                works_written += 1
+
+                # Track which requested author IDs actually appear in returned works
+                for a in w.get("authorships", []) or []:
+                    author = a.get("author") or {}
+                    aid = author.get("id")
+                    if not aid:
+                        continue
+                    aid = aid.split("/")[-1]
+                    if aid in batch_ids:
+                        ids_with_works.add(aid)
+
+            next_cursor = data.get("meta", {}).get("next_cursor")
+            if not next_cursor:
+                break
+            params["cursor"] = next_cursor
+
+    # Identify IDs with / without works
     ids_without = sorted(set(batch_ids) - ids_with_works)
     if ids_without:
         logger.warning("Batch %s: IDs with NO works → %s", batch_index, ", ".join(ids_without))
     else:
         logger.info("Batch %s: all IDs returned works", batch_index)
 
-    # Save parquet
-    if works:
-        df_batch = pd.json_normalize(works)
-        df_batch.to_parquet(fname, index=False)
-        logger.info("Saved batch %s: %s works → %s", batch_index, len(df_batch), fname)
+    if works_written == 0:
+        logger.info("Batch %s: no works returned (file exists but empty): %s", batch_index, fname)
     else:
-        logger.info("Batch %s: no works returned (nothing saved)", batch_index)
+        logger.info("Saved batch %s: %s works → %s", batch_index, works_written, fname)
 
     logger.info("DONE batch %s", batch_index)
     return batch_index
+
 
 
 async def main(

@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
+import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
@@ -20,11 +24,32 @@ DEFAULT_CONFIG = REPO_ROOT / "config.toml"
 FALLBACK_CONFIG = REPO_ROOT / "config.example.toml"
 
 
-def setup_logging(level: str = "INFO") -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+def setup_logging(level: str = "INFO", log_path: str = "logs/run_ingest.log") -> None:
+    log_level = getattr(logging, level.upper(), logging.INFO)
+
+    # Ensure logs directory exists
+    p = Path(log_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+
+    root = logging.getLogger()
+    root.setLevel(log_level)
+
+    # Clear existing handlers (helps in some environments)
+    root.handlers.clear()
+
+    # Console handler
+    ch = logging.StreamHandler()
+    ch.setLevel(log_level)
+    ch.setFormatter(fmt)
+    root.addHandler(ch)
+
+    # Rotating file handler (10MB x 5 files)
+    fh = RotatingFileHandler(p, maxBytes=10_000_000, backupCount=5, encoding="utf-8")
+    fh.setLevel(log_level)
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
 
 
 def load_toml(path: Path) -> dict:
@@ -110,7 +135,7 @@ def main_sync() -> None:
 
     # Allow env overrides for common settings (optional, DevOps-friendly)
     mailto = os.getenv("OPENALEX_EMAIL", get(cfg, "email", "")).strip()
-    output_dir = os.getenv("OUTPUT_DIR", get(cfg, "output_dir", "batch_store_works_api"))
+    output_dir = os.getenv("OUTPUT_DIR", get(cfg, "output_dir", "output"))
     log_level = os.getenv("LOG_LEVEL", get(cfg, "log_level", "INFO"))
 
     batch_size = int(os.getenv("BATCH_SIZE", str(get(cfg, "batch_size", 10))))

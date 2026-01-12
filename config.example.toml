@@ -6,7 +6,7 @@
 email = "your.email@example.com"
 
 # Where Parquet batch files will be written (relative to repo root or absolute path).
-output_dir = "batch_store_works_api"
+output_dir = "output"
 
 # Logging verbosity: DEBUG, INFO, WARNING, ERROR
 log_level = "INFO"
